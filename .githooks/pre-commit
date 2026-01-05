@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# Run quality checks before commit
+echo "Running quality checks..."
+
+# Run composer check (cs, stan, test)
+composer check
+
+# Check exit code
+if [ $? -ne 0 ]; then
+    echo "Quality checks failed. Commit aborted."
+    exit 1
+fi
+
+echo "All quality checks passed. Proceeding with commit."
+exit 0

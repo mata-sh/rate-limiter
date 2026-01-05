@@ -1,0 +1,55 @@
+{
+    "name": "mata-sh/rate-limiter",
+    "description": "Robust rate limiting library for PHP with automatic fallback storage (Redis → APCu → filesystem).",
+    "keywords": [
+        "rate limiter",
+        "rate limit",
+        "redis",
+        "apcu",
+        "file",
+        "php",
+        "shared hosting",
+        "minimal dependencies"
+    ],
+    "type": "library",
+    "license": "MIT",
+
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+
+    "require": {
+        "php": "^8.0",
+        "psr/log": "^3.0"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.1",
+        "friendsofphp/php-cs-fixer": "^3.92"
+    },
+    "autoload": {
+        "psr-4": {
+            "MataSh\\RateLimiter\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Mata",
+            "email": "libs@mata.sh"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/mata-sh/rate-limiter/issues",
+        "source": "https://github.com/mata-sh/rate-limiter"
+    },
+    "scripts": {
+        "post-install-cmd": [
+            "git config core.hooksPath .githooks || true"
+        ],
+        "lint": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php --dry-run --diff",
+        "fix": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php",
+        "stan": "./vendor/bin/phpstan analyse --memory-limit=512M --level=5",
+        "check": [
+            "@lint",
+            "@stan"
+        ]
+    }
+}
