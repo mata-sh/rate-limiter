@@ -23,7 +23,8 @@
     },
     "require-dev": {
         "phpstan/phpstan": "^2.1",
-        "friendsofphp/php-cs-fixer": "^3.92"
+        "friendsofphp/php-cs-fixer": "^3.92",
+        "phpunit/phpunit": "^9.6"
     },
     "autoload": {
         "psr-4": {
@@ -47,9 +48,11 @@
         "lint": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php --dry-run --diff",
         "fix": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php",
         "stan": "./vendor/bin/phpstan analyse --memory-limit=512M --level=5",
+        "test": "vendor/bin/phpunit",
         "check": [
             "@lint",
-            "@stan"
+            "@stan",
+            "@test"
         ]
     }
 }

@@ -49,3 +49,6 @@ jobs:
 
       - name: Static analysis (PHPStan, level 5)
         run: vendor/bin/phpstan analyse --level=5
+
+      - name: Tests (PHPUnit)
+        run: vendor/bin/phpunit
