@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace MataSh\RateLimiter\Tests;
 
 use InvalidArgumentException;
+use MataSh\RateLimiter\RateLimitResult;
 use MataSh\RateLimiter\RateLimiter;
-use MataSh\RateLimiter\Storage\ConsumeResult;
 use MataSh\RateLimiter\Storage\StorageException;
 use MataSh\RateLimiter\Storage\StorageInterface;
 use PHPUnit\Framework\TestCase;
@@ -32,6 +32,40 @@ final class RateLimiterTest extends TestCase
 
         $this->expectException(StorageException::class);
         $limiter->check('user', 1, 60);
+    }
+
+    public function testConsumeTranslatesTheIdentifierAndPropagatesTheStorageResult(): void
+    {
+        $expected = new RateLimitResult(false, 2, 1234567890);
+        $storage = new RecordingStorage($expected);
+        $limiter = new RateLimiter($storage);
+
+        $result = $limiter->consume('user', 2, 60);
+
+        self::assertSame($expected, $result);
+        self::assertFalse($result->isAllowed());
+        self::assertSame(2, $result->getCurrent());
+        self::assertSame(1234567890, $result->getRetryAt());
+        self::assertSame([['rate_limit_user', 2, 60]], $storage->consumeCalls);
+    }
+
+    public function testAllowWrapsConsume(): void
+    {
+        $storage = new RecordingStorage(new RateLimitResult(false, 1, 1234567890));
+        $limiter = new RateLimiter($storage);
+
+        self::assertFalse($limiter->allow('user', 1, 60));
+        self::assertSame([['rate_limit_user', 1, 60]], $storage->consumeCalls);
+    }
+
+    public function testCheckDoesNotReturnResetAt(): void
+    {
+        $limiter = new RateLimiter(new RecordingStorage());
+
+        self::assertArrayNotHasKey('reset_at', $limiter->check('user', 1, 60));
+
+        $limiter->setRateLimitingEnabled(false);
+        self::assertArrayNotHasKey('reset_at', $limiter->check('user', 1, 60));
     }
 
     public function testResetTranslatesTheIdentifierBeforeDeleting(): void
@@ -71,7 +105,7 @@ final class RateLimiterTest extends TestCase
 
 final class FailingStorage implements StorageInterface
 {
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
     {
         throw new StorageException('Storage is unavailable.');
     }
@@ -99,12 +133,24 @@ final class FailingStorage implements StorageInterface
 
 final class RecordingStorage implements StorageInterface
 {
+    /** @var list<array{0: string, 1: int, 2: int}> */
+    public array $consumeCalls = [];
+
     /** @var list<string> */
     public array $deletedKeys = [];
 
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    private RateLimitResult $consumeResult;
+
+    public function __construct(?RateLimitResult $consumeResult = null)
     {
-        return new ConsumeResult(true, 1);
+        $this->consumeResult = $consumeResult ?? new RateLimitResult(true, 1, null);
+    }
+
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
+    {
+        $this->consumeCalls[] = [$key, $maxRequests, $windowSeconds];
+
+        return $this->consumeResult;
     }
 
     public function count(string $key, int $windowSeconds): int
@@ -133,9 +179,9 @@ final class CleanupRecordingStorage implements StorageInterface
     /** @var list<int> */
     public array $cleanupLimits = [];
 
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
     {
-        return new ConsumeResult(true, 1);
+        return new RateLimitResult(true, 1, null);
     }
 
     public function count(string $key, int $windowSeconds): int

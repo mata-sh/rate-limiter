@@ -8,6 +8,7 @@ use DirectoryIterator;
 use ErrorException;
 use InvalidArgumentException;
 use JsonException;
+use MataSh\RateLimiter\RateLimitResult;
 use Throwable;
 
 final class FileStorage implements StorageInterface
@@ -19,16 +20,16 @@ final class FileStorage implements StorageInterface
     public function __construct(?string $directory = null)
     {
         $this->directory = $directory ?: $this->performFilesystemOperation(
-            'determine the system temporary directory',
-            'system temporary directory',
-            static fn (): string => sys_get_temp_dir()
+            description: 'determine the system temporary directory',
+            path: 'system temporary directory',
+            operation: static fn (): string => sys_get_temp_dir(),
         ) . '/cache/rate_limit';
         $this->createSecureDirectory();
     }
 
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
     {
-        return $this->withCleanupReadLock(function () use ($key, $maxRequests, $windowSeconds): ConsumeResult {
+        return $this->withCleanupReadLock(function () use ($key, $maxRequests, $windowSeconds): RateLimitResult {
             $path = $this->statePath($key);
             $handle = $this->openAndLock($path);
             $primaryException = null;
@@ -39,13 +40,13 @@ final class FileStorage implements StorageInterface
                 $current = count($timestamps);
 
                 if ($current >= $maxRequests) {
-                    return new ConsumeResult(false, $current);
+                    return new RateLimitResult(false, $current, min($timestamps) + $windowSeconds);
                 }
 
                 $timestamps[] = $now;
                 $this->writeState($handle, $path, $timestamps, $now + $windowSeconds);
 
-                return new ConsumeResult(true, $current + 1);
+                return new RateLimitResult(true, $current + 1, null);
             } catch (Throwable $exception) {
                 $primaryException = $exception;
 
@@ -87,16 +88,16 @@ final class FileStorage implements StorageInterface
 
         try {
             $exists = $this->performFilesystemOperation(
-                'check whether the rate-limit state file exists',
-                $path,
-                static fn (): bool => file_exists($path)
+                description: 'check whether the rate-limit state file exists',
+                path: $path,
+                operation: static fn (): bool => file_exists($path),
             );
 
             if ($exists) {
                 $removed = $this->performFilesystemOperation(
-                    'remove the rate-limit state file',
-                    $path,
-                    static fn (): bool => unlink($path)
+                    description: 'remove the rate-limit state file',
+                    path: $path,
+                    operation: static fn (): bool => unlink($path),
                 );
 
                 if (!$removed) {
@@ -130,16 +131,16 @@ final class FileStorage implements StorageInterface
 
         try {
             $iterator = $this->performFilesystemOperation(
-                'open the file storage directory for cleanup',
-                $this->directory,
-                fn (): DirectoryIterator => new DirectoryIterator($this->directory)
+                description: 'open the file storage directory for cleanup',
+                path: $this->directory,
+                operation: fn (): DirectoryIterator => new DirectoryIterator($this->directory),
             );
             $this->performFilesystemOperation(
-                'rewind the file storage directory iterator',
-                $this->directory,
-                static function () use ($iterator): void {
+                description: 'rewind the file storage directory iterator',
+                path: $this->directory,
+                operation: static function () use ($iterator): void {
                     $iterator->rewind();
-                }
+                },
             );
 
             while ($this->directoryIteratorIsValid($iterator)) {
@@ -167,9 +168,9 @@ final class FileStorage implements StorageInterface
 
                 try {
                     $locked = $this->performFilesystemOperation(
-                        'lock the rate-limit state file for cleanup',
-                        $path,
-                        static fn (): bool => flock($handle, LOCK_EX)
+                        description: 'lock the rate-limit state file for cleanup',
+                        path: $path,
+                        operation: static fn (): bool => flock($handle, LOCK_EX),
                     );
                     if (!$locked) {
                         throw $this->filesystemFailure('lock the rate-limit state file for cleanup', $path);
@@ -178,9 +179,9 @@ final class FileStorage implements StorageInterface
                     $state = $this->readState($handle, $path);
                     if ($state !== null && isset($state['expires_at']) && is_int($state['expires_at']) && $state['expires_at'] <= time()) {
                         $wasRemoved = $this->performFilesystemOperation(
-                            'remove the expired rate-limit state file',
-                            $path,
-                            static fn (): bool => unlink($path)
+                            description: 'remove the expired rate-limit state file',
+                            path: $path,
+                            operation: static fn (): bool => unlink($path),
                         );
                         if (!$wasRemoved) {
                             throw $this->filesystemFailure('remove the expired rate-limit state file', $path);
@@ -217,21 +218,21 @@ final class FileStorage implements StorageInterface
     {
         $created = false;
         $isDirectory = $this->performFilesystemOperation(
-            'check the file storage directory',
-            $this->directory,
-            fn (): bool => is_dir($this->directory)
+            description: 'check the file storage directory',
+            path: $this->directory,
+            operation: fn (): bool => is_dir($this->directory),
         );
 
         if (!$isDirectory) {
             $created = $this->performFilesystemOperation(
-                'create the file storage directory',
-                $this->directory,
-                fn (): bool => mkdir($this->directory, 0700, true)
+                description: 'create the file storage directory',
+                path: $this->directory,
+                operation: fn (): bool => mkdir($this->directory, 0700, true),
             );
             $isDirectory = $this->performFilesystemOperation(
-                'check the created file storage directory',
-                $this->directory,
-                fn (): bool => is_dir($this->directory)
+                description: 'check the created file storage directory',
+                path: $this->directory,
+                operation: fn (): bool => is_dir($this->directory),
             );
             if (!$created && !$isDirectory) {
                 throw $this->filesystemFailure('create the file storage directory', $this->directory);
@@ -240,9 +241,9 @@ final class FileStorage implements StorageInterface
 
         if ($created) {
             $secured = $this->performFilesystemOperation(
-                'set permissions on the file storage directory',
-                $this->directory,
-                fn (): bool => chmod($this->directory, 0700)
+                description: 'set permissions on the file storage directory',
+                path: $this->directory,
+                operation: fn (): bool => chmod($this->directory, 0700),
             );
             if (!$secured) {
                 throw $this->filesystemFailure('set permissions on the file storage directory', $this->directory);
@@ -254,14 +255,14 @@ final class FileStorage implements StorageInterface
         }
 
         $isWritable = $this->performFilesystemOperation(
-            'check whether the file storage directory is writable',
-            $this->directory,
-            fn (): bool => is_writable($this->directory)
+            description: 'check whether the file storage directory is writable',
+            path: $this->directory,
+            operation: fn (): bool => is_writable($this->directory),
         );
         $isTraversable = $this->performFilesystemOperation(
-            'check whether the file storage directory is traversable',
-            $this->directory,
-            fn (): bool => is_executable($this->directory)
+            description: 'check whether the file storage directory is traversable',
+            path: $this->directory,
+            operation: fn (): bool => is_executable($this->directory),
         );
         if (!$isWritable || !$isTraversable) {
             throw new StorageException('File storage directory is not writable and traversable: ' . $this->directory);
@@ -277,18 +278,18 @@ final class FileStorage implements StorageInterface
 
         try {
             $secured = $this->performFilesystemOperation(
-                'set permissions on the rate-limit state file',
-                $path,
-                static fn (): bool => chmod($path, 0600)
+                description: 'set permissions on the rate-limit state file',
+                path: $path,
+                operation: static fn (): bool => chmod($path, 0600),
             );
             if (!$secured) {
                 throw $this->filesystemFailure('set permissions on the rate-limit state file', $path);
             }
 
             $locked = $this->performFilesystemOperation(
-                'lock the rate-limit state file',
-                $path,
-                static fn (): bool => flock($handle, LOCK_EX)
+                description: 'lock the rate-limit state file',
+                path: $path,
+                operation: static fn (): bool => flock($handle, LOCK_EX),
             );
             if (!$locked) {
                 throw $this->filesystemFailure('lock the rate-limit state file', $path);
@@ -312,18 +313,18 @@ final class FileStorage implements StorageInterface
 
         try {
             $secured = $this->performFilesystemOperation(
-                'set permissions on the rate-limit cleanup lock',
-                $path,
-                static fn (): bool => chmod($path, 0600)
+                description: 'set permissions on the rate-limit cleanup lock',
+                path: $path,
+                operation: static fn (): bool => chmod($path, 0600),
             );
             if (!$secured) {
                 throw $this->filesystemFailure('set permissions on the rate-limit cleanup lock', $path);
             }
 
             $locked = $this->performFilesystemOperation(
-                'lock the rate-limit cleanup lock',
-                $path,
-                static fn (): bool => flock($handle, $mode)
+                description: 'lock the rate-limit cleanup lock',
+                path: $path,
+                operation: static fn (): bool => flock($handle, $mode),
             );
             if (!$locked) {
                 throw $this->filesystemFailure('lock the rate-limit cleanup lock', $path);
@@ -370,9 +371,9 @@ final class FileStorage implements StorageInterface
 
         try {
             $handle = $this->performFilesystemOperation(
-                $operation,
-                $path,
-                static fn () => fopen($path, 'c+')
+                description: $operation,
+                path: $path,
+                operation: static fn () => fopen($path, 'c+'),
             );
         } finally {
             umask($previousUmask);
@@ -432,18 +433,18 @@ final class FileStorage implements StorageInterface
     private function readState($handle, string $path): ?array
     {
         $rewound = $this->performFilesystemOperation(
-            'rewind the rate-limit state file for reading',
-            $path,
-            static fn (): bool => rewind($handle)
+            description: 'rewind the rate-limit state file for reading',
+            path: $path,
+            operation: static fn (): bool => rewind($handle),
         );
         if (!$rewound) {
             throw $this->filesystemFailure('rewind the rate-limit state file for reading', $path);
         }
 
         $contents = $this->performFilesystemOperation(
-            'read the rate-limit state file',
-            $path,
-            static fn () => stream_get_contents($handle)
+            description: 'read the rate-limit state file',
+            path: $path,
+            operation: static fn () => stream_get_contents($handle),
         );
         if ($contents === false) {
             throw $this->filesystemFailure('read the rate-limit state file', $path);
@@ -482,36 +483,36 @@ final class FileStorage implements StorageInterface
         }
 
         $rewound = $this->performFilesystemOperation(
-            'rewind the rate-limit state file for writing',
-            $path,
-            static fn (): bool => rewind($handle)
+            description: 'rewind the rate-limit state file for writing',
+            path: $path,
+            operation: static fn (): bool => rewind($handle),
         );
         if (!$rewound) {
             throw $this->filesystemFailure('rewind the rate-limit state file for writing', $path);
         }
 
         $truncated = $this->performFilesystemOperation(
-            'truncate the rate-limit state file',
-            $path,
-            static fn (): bool => ftruncate($handle, 0)
+            description: 'truncate the rate-limit state file',
+            path: $path,
+            operation: static fn (): bool => ftruncate($handle, 0),
         );
         if (!$truncated) {
             throw $this->filesystemFailure('truncate the rate-limit state file', $path);
         }
 
         $bytesWritten = $this->performFilesystemOperation(
-            'write the rate-limit state file',
-            $path,
-            static fn () => fwrite($handle, $contents)
+            description: 'write the rate-limit state file',
+            path: $path,
+            operation: static fn () => fwrite($handle, $contents),
         );
         if ($bytesWritten !== strlen($contents)) {
             throw $this->filesystemFailure('write the complete rate-limit state file', $path);
         }
 
         $flushed = $this->performFilesystemOperation(
-            'flush the rate-limit state file',
-            $path,
-            static fn (): bool => fflush($handle)
+            description: 'flush the rate-limit state file',
+            path: $path,
+            operation: static fn (): bool => fflush($handle),
         );
         if (!$flushed) {
             throw $this->filesystemFailure('flush the rate-limit state file', $path);
@@ -527,9 +528,9 @@ final class FileStorage implements StorageInterface
 
         try {
             $unlocked = $this->performFilesystemOperation(
-                'unlock the filesystem resource',
-                $path,
-                static fn (): bool => flock($handle, LOCK_UN)
+                description: 'unlock the filesystem resource',
+                path: $path,
+                operation: static fn (): bool => flock($handle, LOCK_UN),
             );
             if (!$unlocked) {
                 throw $this->filesystemFailure('unlock the filesystem resource', $path);
@@ -540,9 +541,9 @@ final class FileStorage implements StorageInterface
 
         try {
             $closed = $this->performFilesystemOperation(
-                'close the filesystem resource',
-                $path,
-                static fn (): bool => fclose($handle)
+                description: 'close the filesystem resource',
+                path: $path,
+                operation: static fn (): bool => fclose($handle),
             );
             if (!$closed) {
                 throw $this->filesystemFailure('close the filesystem resource', $path);
@@ -561,47 +562,47 @@ final class FileStorage implements StorageInterface
     private function directoryIteratorIsValid(DirectoryIterator $iterator): bool
     {
         return $this->performFilesystemOperation(
-            'validate the current file storage directory entry',
-            $this->directory,
-            static fn (): bool => $iterator->valid()
+            description: 'validate the current file storage directory entry',
+            path: $this->directory,
+            operation: static fn (): bool => $iterator->valid(),
         );
     }
 
     private function directoryIteratorEntryIsFile(DirectoryIterator $iterator): bool
     {
         return $this->performFilesystemOperation(
-            'inspect the current file storage directory entry',
-            $this->directory,
-            static fn (): bool => $iterator->isFile()
+            description: 'inspect the current file storage directory entry',
+            path: $this->directory,
+            operation: static fn (): bool => $iterator->isFile(),
         );
     }
 
     private function directoryIteratorFilename(DirectoryIterator $iterator): string
     {
         return $this->performFilesystemOperation(
-            'read the current file storage directory entry name',
-            $this->directory,
-            static fn (): string => $iterator->getFilename()
+            description: 'read the current file storage directory entry name',
+            path: $this->directory,
+            operation: static fn (): string => $iterator->getFilename(),
         );
     }
 
     private function directoryIteratorPathname(DirectoryIterator $iterator): string
     {
         return $this->performFilesystemOperation(
-            'read the current file storage directory entry path',
-            $this->directory,
-            static fn (): string => $iterator->getPathname()
+            description: 'read the current file storage directory entry path',
+            path: $this->directory,
+            operation: static fn (): string => $iterator->getPathname(),
         );
     }
 
     private function advanceDirectoryIterator(DirectoryIterator $iterator): void
     {
         $this->performFilesystemOperation(
-            'advance the file storage directory iterator',
-            $this->directory,
-            static function () use ($iterator): void {
+            description: 'advance the file storage directory iterator',
+            path: $this->directory,
+            operation: static function () use ($iterator): void {
                 $iterator->next();
-            }
+            },
         );
     }
 

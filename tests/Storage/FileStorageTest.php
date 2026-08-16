@@ -59,6 +59,27 @@ final class FileStorageTest extends TestCase
         self::assertFalse($second->allow('user', 1, 60));
     }
 
+    public function testConsumeReturnsRetryAtForDeniedRequests(): void
+    {
+        $limiter = new RateLimiter(new FileStorage($this->directory));
+        $windowSeconds = 60;
+        $allowed = $limiter->consume('allowed', 1, $windowSeconds);
+        $oldest = time() - 30;
+        self::assertIsInt(file_put_contents(
+            $this->directory . '/' . hash('sha256', 'rate_limit_denied') . '.json',
+            json_encode(['timestamps' => [$oldest], 'expires_at' => $oldest + $windowSeconds], JSON_THROW_ON_ERROR)
+        ));
+
+        $denied = $limiter->consume('denied', 1, $windowSeconds);
+
+        self::assertTrue($allowed->isAllowed());
+        self::assertSame(1, $allowed->getCurrent());
+        self::assertNull($allowed->getRetryAt());
+        self::assertFalse($denied->isAllowed());
+        self::assertSame(1, $denied->getCurrent());
+        self::assertSame($oldest + $windowSeconds, $denied->getRetryAt());
+    }
+
     /**
      * @group integration
      * @group concurrency

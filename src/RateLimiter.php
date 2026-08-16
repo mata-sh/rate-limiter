@@ -27,15 +27,15 @@ class RateLimiter
     }
 
     /**
-     * Check and atomically consume one request when allowed.
+     * Atomically consume one request and return the result.
      */
-    public function allow(
+    public function consume(
         string $identifier,
         ?int $maxRequests = null,
         ?int $windowSeconds = null
-    ): bool {
+    ): RateLimitResult {
         if (!$this->isRateLimitingEnabled) {
-            return true;
+            return new RateLimitResult(true, 0, null);
         }
 
         [$maxRequests, $windowSeconds] = $this->resolveLimit($maxRequests, $windowSeconds);
@@ -45,13 +45,24 @@ class RateLimiter
             $this->logger->warning('Rate limit exceeded for ' . $identifier . ': ' . $result->getCurrent() . '/' . $maxRequests);
         }
 
-        return $result->isAllowed();
+        return $result;
+    }
+
+    /**
+     * Check and atomically consume one request when allowed.
+     */
+    public function allow(
+        string $identifier,
+        ?int $maxRequests = null,
+        ?int $windowSeconds = null
+    ): bool {
+        return $this->consume($identifier, $maxRequests, $windowSeconds)->isAllowed();
     }
 
     /**
      * Check a limit without consuming a request.
      *
-     * @return array{allowed: bool, current: int, limit: int, remaining: int, reset_at: int, storage_type: string}
+     * @return array{allowed: bool, current: int, limit: int, remaining: int, storage_type: string}
      */
     public function check(
         string $identifier,
@@ -64,7 +75,6 @@ class RateLimiter
                 'current' => 0,
                 'limit' => PHP_INT_MAX,
                 'remaining' => PHP_INT_MAX,
-                'reset_at' => 0,
                 'storage_type' => 'disabled',
             ];
         }
@@ -77,7 +87,6 @@ class RateLimiter
             'current' => $current,
             'limit' => $maxRequests,
             'remaining' => max(0, $maxRequests - $current),
-            'reset_at' => time(),
             'storage_type' => $this->storage->getName(),
         ];
     }

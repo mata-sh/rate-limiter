@@ -12,7 +12,7 @@ composer require mata-sh/rate-limiter
 
 ## Basic usage
 
-Pass a storage implementation explicitly. `allow()` atomically checks a limit and consumes one request when it allows it.
+Pass a storage implementation explicitly. `consume()` atomically checks a limit and consumes one request when it allows it.
 
 ```php
 use MataSh\RateLimiter\RateLimitIdentifier;
@@ -21,9 +21,21 @@ use MataSh\RateLimiter\Storage\FileStorage;
 
 $limiter = new RateLimiter(new FileStorage('/var/app/cache/rate-limit'));
 $identifier = RateLimitIdentifier::fromIp();
+$result = $limiter->consume($identifier, 100, 3600);
 
+if (!$result->isAllowed()) {
+    $retryAt = $result->getRetryAt();
+    // Reject the request. $retryAt is the Unix timestamp when one request can next succeed.
+}
+```
+
+`RateLimitResult` provides `isAllowed(): bool`, `getCurrent(): int`, and `getRetryAt(): ?int`. `retryAt` is `null` for allowed requests. For denied requests, it is calculated atomically as the oldest request still in the sliding window plus the window duration.
+
+`allow()` remains a compatibility convenience wrapper around `consume()` when only a boolean is needed:
+
+```php
 if (!$limiter->allow($identifier, 100, 3600)) {
-    // Reject the request: this identifier has made 100 requests in the last hour.
+    // Reject the request.
 }
 ```
 
@@ -45,14 +57,13 @@ if (!$status['allowed']) {
 | `current` | Requests currently counted in the sliding window. |
 | `limit` | The effective maximum request count. |
 | `remaining` | Requests still allowed, never below zero. |
-| `reset_at` | The Unix timestamp when `check()` ran. It is **not** the time at which the limit will reset. |
 | `storage_type` | The configured storage's `getName()` value (built-ins return `file`, `apcu`, or `redis`). |
 
-When rate limiting is disabled, `check()` returns `allowed: true`, `current: 0`, `limit` and `remaining` as `PHP_INT_MAX`, `reset_at: 0`, and `storage_type: 'disabled'`.
+`check()` is non-atomic and does not provide retry guidance. When rate limiting is disabled, it returns `allowed: true`, `current: 0`, `limit` and `remaining` as `PHP_INT_MAX`, and `storage_type: 'disabled'`.
 
 ## Reset and cleanup
 
-Reset one identifier through the limiter facade. It uses the same storage key translation as `allow()` and `check()`:
+Reset one identifier through the limiter facade. It uses the same storage key translation as `consume()`, `allow()`, and `check()`:
 
 ```php
 $limiter->reset($identifier);

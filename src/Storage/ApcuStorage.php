@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MataSh\RateLimiter\Storage;
 
 use InvalidArgumentException;
+use MataSh\RateLimiter\RateLimitResult;
 use Throwable;
 
 final class ApcuStorage implements StorageInterface
@@ -19,21 +20,21 @@ final class ApcuStorage implements StorageInterface
         }
     }
 
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
     {
-        return $this->withLock($key, function () use ($key, $maxRequests, $windowSeconds): ConsumeResult {
+        return $this->withLock($key, function () use ($key, $maxRequests, $windowSeconds): RateLimitResult {
             $now = time();
             $timestamps = $this->readTimestamps($key, $now, $windowSeconds);
             $current = count($timestamps);
 
             if ($current >= $maxRequests) {
-                return new ConsumeResult(false, $current);
+                return new RateLimitResult(false, $current, min($timestamps) + $windowSeconds);
             }
 
             $timestamps[] = $now;
             $this->store($key, $timestamps, $windowSeconds);
 
-            return new ConsumeResult(true, $current + 1);
+            return new RateLimitResult(true, $current + 1, null);
         });
     }
 

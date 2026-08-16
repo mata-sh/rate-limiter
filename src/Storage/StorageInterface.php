@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace MataSh\RateLimiter\Storage;
 
+use MataSh\RateLimiter\RateLimitResult;
+
 interface StorageInterface
 {
     /**
      * Atomically record one request when the limit has not been reached.
+     *
+     * Denied results must include retry guidance from the same atomic operation.
      */
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult;
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult;
 
     /**
      * Return the number of requests currently in the sliding window.

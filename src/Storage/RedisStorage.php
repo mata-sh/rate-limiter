@@ -6,6 +6,7 @@ namespace MataSh\RateLimiter\Storage;
 
 use InvalidArgumentException;
 use JsonException;
+use MataSh\RateLimiter\RateLimitResult;
 use Redis;
 use Throwable;
 
@@ -15,7 +16,7 @@ final class RedisStorage implements StorageInterface
 
     public function __construct(private Redis $redis) {}
 
-    public function consume(string $key, int $maxRequests, int $windowSeconds): ConsumeResult
+    public function consume(string $key, int $maxRequests, int $windowSeconds): RateLimitResult
     {
         for ($attempt = 0; $attempt < self::MAX_RETRIES; ++$attempt) {
             $watched = false;
@@ -37,7 +38,7 @@ final class RedisStorage implements StorageInterface
                     }
                     $watched = false;
 
-                    return new ConsumeResult(false, $current);
+                    return new RateLimitResult(false, $current, min($timestamps) + $windowSeconds);
                 }
 
                 $timestamps[] = $now;
@@ -64,7 +65,7 @@ final class RedisStorage implements StorageInterface
                     throw new StorageException('Unable to write Redis rate-limit state.');
                 }
 
-                return new ConsumeResult(true, $current + 1);
+                return new RateLimitResult(true, $current + 1, null);
             } catch (StorageException $exception) {
                 throw $exception;
             } catch (Throwable $exception) {
