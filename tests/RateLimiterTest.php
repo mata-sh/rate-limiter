@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace MataSh\RateLimiter\Tests;
 
 use InvalidArgumentException;
-use MataSh\RateLimiter\RateLimitResult;
 use MataSh\RateLimiter\RateLimiter;
+use MataSh\RateLimiter\RateLimitResult;
 use MataSh\RateLimiter\Storage\StorageException;
 use MataSh\RateLimiter\Storage\StorageInterface;
 use PHPUnit\Framework\TestCase;
